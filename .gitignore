@@ -141,3 +141,6 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# Machine-specific CA bundle (regenerate with scripts/export-ca-bundle.ps1)
+certs/
