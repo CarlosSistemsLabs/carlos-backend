@@ -1,0 +1,618 @@
+// Prisma schema for the Carlos ERP backend.
+//
+// Defines the generator and datasource plus the core Tenant and User
+// management models (Tenant, User, RefreshToken, Role, Permission).
+// Remaining business domain models (products, sales, cash, subscriptions,
+// etc.) are introduced in later tasks.
+//
+// Docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// =============================================================================
+// Tenant and User Management
+// =============================================================================
+//
+// NOTE: Relation fields to models not yet defined (Branch, Customer, Supplier,
+// Product, Sale, Purchase, Subscription, Configuration, FeatureFlag, AuditLog,
+// CashMovement) are intentionally omitted here. They will be re-added by the
+// tasks that introduce those models (tasks 5.2-5.5). See the task report for
+// the full list of omitted relation fields.
+
+model Tenant {
+  id             String    @id @default(uuid())
+  name           String
+  slug           String    @unique
+  logo           String?
+  primaryColor   String?
+  secondaryColor String?
+  theme          String    @default("light")
+  language       String    @default("es")
+  timezone       String    @default("America/Argentina/Buenos_Aires")
+  currency       String    @default("ARS")
+  dateFormat     String    @default("DD/MM/YYYY")
+  taxId          String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
+
+  users          User[]
+  roles          Role[]
+  products       Product[]
+  stock          Stock[]
+  stockMovements StockMovement[]
+  categories     Category[]
+  customers      Customer[]
+  suppliers      Supplier[]
+  branches       Branch[]
+  sales          Sale[]
+  purchases      Purchase[]
+  cash           Cash[]
+  cashMovements  CashMovement[]
+  payments       Payment[]
+  subscriptions  Subscription[]
+  featureFlags   FeatureFlag[]
+  configurations Configuration[]
+  auditLogs      AuditLog[]
+
+  @@index([slug])
+}
+
+model User {
+  id               String    @id @default(uuid())
+  tenantId         String
+  email            String
+  passwordHash     String
+  firstName        String
+  lastName         String
+  phone            String?
+  avatar           String?
+  roleId           String
+  isActive         Boolean   @default(true)
+  lastLoginAt      DateTime?
+  failedLoginCount Int       @default(0)
+  lockedUntil      DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  deletedAt        DateTime?
+
+  tenant        Tenant         @relation(fields: [tenantId], references: [id])
+  role          Role           @relation(fields: [roleId], references: [id])
+  refreshTokens RefreshToken[]
+  sales         Sale[]
+  purchases     Purchase[]
+  cashMovements CashMovement[]
+  auditLogs     AuditLog[]
+
+  @@unique([tenantId, email])
+  @@index([tenantId])
+  @@index([email])
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  isRevoked Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([token])
+  @@index([userId])
+}
+
+model Role {
+  id          String   @id @default(uuid())
+  tenantId    String
+  name        String
+  description String?
+  isSystem    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant      Tenant       @relation(fields: [tenantId], references: [id])
+  users       User[]
+  permissions Permission[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+}
+
+model Permission {
+  id     String @id @default(uuid())
+  roleId String
+  module String // e.g., "sales", "products", "customers"
+  screen String // e.g., "list", "detail", "create"
+  action String // e.g., "read", "write", "delete"
+
+  role Role @relation(fields: [roleId], references: [id])
+
+  @@unique([roleId, module, screen, action])
+  @@index([roleId])
+}
+
+// =============================================================================
+// Product and Inventory Management
+// =============================================================================
+//
+// NOTE: The Stock and StockMovement models reference a branch via `branchId`.
+// The Branch model is introduced in task 5.3, so for now `branchId` is kept as
+// a plain optional String without a Branch relation. Task 5.3 will add the
+// `branch Branch? @relation(...)` field and the matching back-relation on
+// Branch.
+//
+// NOTE: The Product model intentionally omits the `saleDetails SaleDetail[]`
+// and `purchaseDetails PurchaseDetail[]` back-relations. The SaleDetail and
+// PurchaseDetail models are introduced in task 5.3, which will add those
+// relation fields back to Product.
+
+model Category {
+  id          String    @id @default(uuid())
+  tenantId    String
+  name        String
+  description String?
+  parentId    String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  tenant   Tenant     @relation(fields: [tenantId], references: [id])
+  parent   Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  children Category[] @relation("CategoryHierarchy")
+  products Product[]
+
+  @@index([tenantId])
+  @@index([parentId])
+}
+
+model Product {
+  id          String    @id @default(uuid())
+  tenantId    String
+  categoryId  String
+  sku         String
+  name        String
+  description String?
+  price       Decimal   @db.Decimal(12, 2)
+  cost        Decimal?  @db.Decimal(12, 2)
+  taxRate     Decimal   @default(0) @db.Decimal(5, 2)
+  unit        String    @default("unit") // unit, kg, liter, etc.
+  minStock    Int       @default(0)
+  isActive    Boolean   @default(true)
+  imageUrl    String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  tenant          Tenant           @relation(fields: [tenantId], references: [id])
+  category        Category         @relation(fields: [categoryId], references: [id])
+  stock           Stock[]
+  stockMovements  StockMovement[]
+  saleDetails     SaleDetail[]
+  purchaseDetails PurchaseDetail[]
+
+  @@unique([tenantId, sku])
+  @@index([tenantId])
+  @@index([categoryId])
+  @@index([sku])
+  // Product listing (task 39.3): the default catalogue list scopes by tenantId
+  // and orders by name; [tenantId, name] serves both the equality scope and the
+  // sort as one B-tree scan (Req 26.4, 26.5). [tenantId, isActive] backs the
+  // frequent active/inactive filter within a tenant.
+  @@index([tenantId, name])
+  @@index([tenantId, isActive])
+}
+
+model Stock {
+  id        String   @id @default(uuid())
+  tenantId  String
+  productId String
+  branchId  String? // Branch relation added by task 5.3.
+  quantity  Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id])
+  product Product @relation(fields: [productId], references: [id])
+  branch  Branch? @relation(fields: [branchId], references: [id])
+
+  @@unique([tenantId, productId, branchId])
+  @@index([tenantId])
+  @@index([productId])
+}
+
+model StockMovement {
+  id        String   @id @default(uuid())
+  tenantId  String
+  productId String
+  branchId  String? // Branch relation added by task 5.3.
+  type      String // "IN" | "OUT" | "ADJUSTMENT" | "TRANSFER"
+  quantity  Int
+  reference String? // Reference to sale_id, purchase_id, etc.
+  notes     String?
+  createdAt DateTime @default(now())
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id])
+  product Product @relation(fields: [productId], references: [id])
+  branch  Branch? @relation(fields: [branchId], references: [id])
+
+  @@index([tenantId])
+  @@index([productId])
+  @@index([createdAt])
+  // Stock-movement history (task 39.3): the audit list scopes by tenantId and
+  // orders by createdAt desc (newest-first) — the primary target for cursor
+  // pagination on this append-only, high-volume table. [tenantId, createdAt]
+  // serves the tenant-wide history; [tenantId, productId, createdAt] serves the
+  // common per-product history filter + ordering (Req 26.4, 26.6).
+  @@index([tenantId, createdAt])
+  @@index([tenantId, productId, createdAt])
+}
+
+// =============================================================================
+// Sales and Purchase Transactions
+// =============================================================================
+//
+// NOTE: The Sale and Purchase models reference a `Payment[]` relation
+// (sale.payments / purchase.payments) in the design. The Payment model is
+// introduced in task 5.4, so the `payments Payment[]` relation fields are
+// intentionally omitted here. Task 5.4 will add them back.
+
+model Sale {
+  id         String    @id @default(uuid())
+  tenantId   String
+  customerId String
+  branchId   String?
+  userId     String
+  saleNumber String
+  saleDate   DateTime  @default(now())
+  status     String    @default("completed") // draft, completed, cancelled
+  subtotal   Decimal   @db.Decimal(12, 2)
+  taxAmount  Decimal   @db.Decimal(12, 2)
+  total      Decimal   @db.Decimal(12, 2)
+  notes      String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  deletedAt  DateTime?
+
+  tenant   Tenant       @relation(fields: [tenantId], references: [id])
+  customer Customer     @relation(fields: [customerId], references: [id])
+  branch   Branch?      @relation(fields: [branchId], references: [id])
+  user     User         @relation(fields: [userId], references: [id])
+  details  SaleDetail[]
+  payments Payment[]
+
+  @@unique([tenantId, saleNumber])
+  @@index([tenantId])
+  @@index([customerId])
+  @@index([saleDate])
+  // Report queries (task 25.2): sales summary, top-customers and product
+  // performance all scope Sale by tenantId + status='completed' over a saleDate
+  // range (sales summary also orders by saleDate). Leading equality columns
+  // (tenantId, status) followed by the range/sort column (saleDate) is the
+  // optimal B-tree layout for those readers and is more selective than the
+  // single-column [tenantId]/[saleDate] indexes. (Req 26.4, 31.4)
+  @@index([tenantId, status, saleDate])
+  // Sales listing (task 39.3): the default sales list scopes by tenantId and
+  // orders by saleDate desc without a status filter, so the status-agnostic
+  // [tenantId, saleDate] composite is more selective than the single-column
+  // [saleDate] index and avoids a separate sort (Req 26.4, 26.5).
+  @@index([tenantId, saleDate])
+}
+
+model SaleDetail {
+  id        String  @id @default(uuid())
+  saleId    String
+  productId String
+  quantity  Int
+  unitPrice Decimal @db.Decimal(12, 2)
+  taxRate   Decimal @db.Decimal(5, 2)
+  subtotal  Decimal @db.Decimal(12, 2)
+  taxAmount Decimal @db.Decimal(12, 2)
+  total     Decimal @db.Decimal(12, 2)
+
+  sale    Sale    @relation(fields: [saleId], references: [id])
+  product Product @relation(fields: [productId], references: [id])
+
+  @@index([saleId])
+  @@index([productId])
+}
+
+model Purchase {
+  id             String    @id @default(uuid())
+  tenantId       String
+  supplierId     String
+  userId         String
+  purchaseNumber String
+  purchaseDate   DateTime  @default(now())
+  status         String    @default("completed")
+  subtotal       Decimal   @db.Decimal(12, 2)
+  taxAmount      Decimal   @db.Decimal(12, 2)
+  total          Decimal   @db.Decimal(12, 2)
+  notes          String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
+
+  tenant   Tenant           @relation(fields: [tenantId], references: [id])
+  supplier Supplier         @relation(fields: [supplierId], references: [id])
+  user     User             @relation(fields: [userId], references: [id])
+  details  PurchaseDetail[]
+  payments Payment[]
+
+  @@unique([tenantId, purchaseNumber])
+  @@index([tenantId])
+  @@index([supplierId])
+  @@index([purchaseDate])
+  // Purchase listing (task 39.3): mirrors Sale — the default list scopes by
+  // tenantId and orders by purchaseDate desc; [tenantId, purchaseDate] serves
+  // that, and [tenantId, status, purchaseDate] serves status-filtered listings
+  // (e.g. draft vs completed) with the date sort (Req 26.4, 26.5).
+  @@index([tenantId, purchaseDate])
+  @@index([tenantId, status, purchaseDate])
+}
+
+model PurchaseDetail {
+  id         String  @id @default(uuid())
+  purchaseId String
+  productId  String
+  quantity   Int
+  unitCost   Decimal @db.Decimal(12, 2)
+  taxRate    Decimal @db.Decimal(5, 2)
+  subtotal   Decimal @db.Decimal(12, 2)
+  taxAmount  Decimal @db.Decimal(12, 2)
+  total      Decimal @db.Decimal(12, 2)
+
+  purchase Purchase @relation(fields: [purchaseId], references: [id])
+  product  Product  @relation(fields: [productId], references: [id])
+
+  @@index([purchaseId])
+  @@index([productId])
+}
+
+// =============================================================================
+// Customers, Suppliers, and Branches
+// =============================================================================
+
+model Customer {
+  id        String    @id @default(uuid())
+  tenantId  String
+  name      String
+  email     String?
+  phone     String?
+  taxId     String?
+  address   String?
+  notes     String?
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  sales  Sale[]
+
+  @@index([tenantId])
+  @@index([email])
+  // Customer listing/lookup (task 39.3): the default list scopes by tenantId
+  // and orders by name; [tenantId, name] serves scope + sort. [tenantId, email]
+  // makes the tenant-scoped uniqueness/lookup by email selective (the bare
+  // [email] index is not tenant-anchored) (Req 26.4, 26.5).
+  @@index([tenantId, name])
+  @@index([tenantId, email])
+}
+
+model Supplier {
+  id        String    @id @default(uuid())
+  tenantId  String
+  name      String
+  email     String?
+  phone     String?
+  taxId     String?
+  address   String?
+  notes     String?
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  tenant    Tenant     @relation(fields: [tenantId], references: [id])
+  purchases Purchase[]
+
+  @@index([tenantId])
+  // Supplier listing (task 39.3): the default list scopes by tenantId and
+  // orders by name; [tenantId, name] serves scope + sort (Req 26.4, 26.5).
+  @@index([tenantId, name])
+}
+
+model Branch {
+  id        String    @id @default(uuid())
+  tenantId  String
+  name      String
+  address   String?
+  phone     String?
+  isMain    Boolean   @default(false)
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  tenant         Tenant          @relation(fields: [tenantId], references: [id])
+  stock          Stock[]
+  stockMovements StockMovement[]
+  sales          Sale[]
+
+  @@index([tenantId])
+}
+
+// =============================================================================
+// Cash Management and Payments
+// =============================================================================
+
+model Cash {
+  id        String   @id @default(uuid())
+  tenantId  String
+  branchId  String?
+  name      String
+  balance   Decimal  @default(0) @db.Decimal(12, 2)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant    Tenant         @relation(fields: [tenantId], references: [id])
+  movements CashMovement[]
+
+  @@index([tenantId])
+}
+
+model CashMovement {
+  id          String   @id @default(uuid())
+  cashId      String
+  tenantId    String
+  userId      String
+  type        String // "INCOME" | "EXPENSE"
+  category    String // "sale", "purchase", "other"
+  amount      Decimal  @db.Decimal(12, 2)
+  reference   String?
+  description String?
+  date        DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  cash   Cash   @relation(fields: [cashId], references: [id])
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@index([cashId])
+  @@index([tenantId])
+  @@index([date])
+  // Report queries (task 25.2): the cash-flow reader groups movements by
+  // (type, category) scoped by tenantId over a date range. [tenantId, date]
+  // serves the tenant-wide flow (equality on tenantId + range on date). (Req 26.4)
+  @@index([tenantId, date])
+  // When the cash-flow report is filtered to a single cash box (optional
+  // cashId), [cashId, date] is more selective than the single [cashId] index
+  // because it also narrows the date window. (Req 31.4)
+  @@index([cashId, date])
+}
+
+model Payment {
+  id         String   @id @default(uuid())
+  tenantId   String
+  saleId     String?
+  purchaseId String?
+  method     String // "cash", "card", "transfer", "check"
+  amount     Decimal  @db.Decimal(12, 2)
+  reference  String?
+  date       DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  tenant   Tenant    @relation(fields: [tenantId], references: [id])
+  sale     Sale?     @relation(fields: [saleId], references: [id])
+  purchase Purchase? @relation(fields: [purchaseId], references: [id])
+
+  @@index([tenantId])
+  @@index([saleId])
+  @@index([purchaseId])
+}
+
+// =============================================================================
+// Subscription and Feature Management
+// =============================================================================
+//
+// NOTE: Plan is a platform-level (global) entity and intentionally has no
+// tenantId. Per the design, the operational/configuration records below
+// (Plan, Subscription, FeatureFlag, Configuration) do not use soft delete
+// (no deletedAt), matching design.md exactly.
+
+model Plan {
+  id           String   @id @default(uuid())
+  name         String   @unique
+  displayName  String
+  description  String?
+  price        Decimal  @db.Decimal(10, 2)
+  billingCycle String // "monthly", "yearly"
+  features     Json // Array of feature names
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  subscriptions Subscription[]
+}
+
+model Subscription {
+  id        String    @id @default(uuid())
+  tenantId  String
+  planId    String
+  status    String    @default("active") // active, cancelled, expired
+  startDate DateTime  @default(now())
+  endDate   DateTime?
+  autoRenew Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  plan   Plan   @relation(fields: [planId], references: [id])
+
+  @@index([tenantId])
+  @@index([planId])
+}
+
+model FeatureFlag {
+  id        String   @id @default(uuid())
+  tenantId  String
+  feature   String
+  isEnabled Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@unique([tenantId, feature])
+  @@index([tenantId])
+}
+
+model Configuration {
+  id        String   @id @default(uuid())
+  tenantId  String
+  key       String
+  value     Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@unique([tenantId, key])
+  @@index([tenantId])
+}
+
+// =============================================================================
+// Audit and Compliance
+// =============================================================================
+//
+// NOTE: AuditLog is an immutable audit trail (Req 18.5). It intentionally has
+// no updatedAt and no soft delete (deletedAt). Records are append-only.
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  tenantId   String
+  userId     String?
+  entityType String
+  entityId   String
+  action     String // "CREATE" | "UPDATE" | "DELETE"
+  oldValues  Json?
+  newValues  Json?
+  ipAddress  String?
+  userAgent  String?
+  timestamp  DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  user   User?  @relation(fields: [userId], references: [id])
+
+  @@index([tenantId])
+  @@index([entityType, entityId])
+  @@index([timestamp])
+}
