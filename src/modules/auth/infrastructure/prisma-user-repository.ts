@@ -1,6 +1,6 @@
-import type { UUID } from '@shared/types/index.js';
+import type { PaginatedResult, UUID } from '@shared/types/index.js';
 import { AuthUser } from '../domain/entities/auth-user.js';
-import type { IUserRepository } from '../domain/repositories/user-repository.js';
+import type { IUserRepository, ListUsersQuery } from '../domain/repositories/user-repository.js';
 
 /**
  * Persistence row shape for the `User` model consumed by this repository. A
@@ -26,6 +26,13 @@ export interface UserRow {
 /** Minimal `User` delegate surface used by {@link PrismaUserRepository}. */
 export interface UserModelDelegate {
   findFirst(args: { where: Record<string, unknown> }): Promise<UserRow | null>;
+  findMany(args: {
+    where: Record<string, unknown>;
+    orderBy?: Record<string, unknown>;
+    skip?: number;
+    take?: number;
+  }): Promise<UserRow[]>;
+  count(args: { where: Record<string, unknown> }): Promise<number>;
   create(args: { data: Record<string, unknown> }): Promise<UserRow>;
   update(args: { where: Record<string, unknown>; data: Record<string, unknown> }): Promise<UserRow>;
 }
@@ -59,6 +66,38 @@ export class PrismaUserRepository implements IUserRepository {
       where: { id, deletedAt: null },
     });
     return row === null ? null : PrismaUserRepository.toDomain(row);
+  }
+
+  async listByTenant(tenantId: UUID, query: ListUsersQuery): Promise<PaginatedResult<AuthUser>> {
+    const where: Record<string, unknown> = { tenantId, deletedAt: null };
+    if (query.isActive !== undefined) {
+      where.isActive = query.isActive;
+    }
+    if (query.search !== undefined && query.search !== '') {
+      where.OR = [
+        { email: { contains: query.search, mode: 'insensitive' } },
+        { firstName: { contains: query.search, mode: 'insensitive' } },
+        { lastName: { contains: query.search, mode: 'insensitive' } },
+      ];
+    }
+
+    const [rows, total] = await Promise.all([
+      this.prisma.user.findMany({
+        where,
+        orderBy: { email: 'asc' },
+        skip: (query.page - 1) * query.pageSize,
+        take: query.pageSize,
+      }),
+      this.prisma.user.count({ where }),
+    ]);
+
+    return {
+      items: rows.map(PrismaUserRepository.toDomain),
+      total,
+      page: query.page,
+      pageSize: query.pageSize,
+      totalPages: total === 0 ? 0 : Math.ceil(total / query.pageSize),
+    };
   }
 
   async create(user: AuthUser): Promise<AuthUser> {

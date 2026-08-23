@@ -51,6 +51,7 @@ describe('RefreshTokenUseCase', () => {
     users = {
       findByEmail: vi.fn(),
       findById: vi.fn().mockResolvedValue(makeUser()),
+      listByTenant: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
     };

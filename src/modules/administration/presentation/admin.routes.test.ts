@@ -12,7 +12,10 @@ import { registerAuthorization } from '@presentation/middlewares/authorization.j
 import type { PaginatedResult, UUID } from '@shared/types/index.js';
 import { JwtTokenService } from '../../auth/infrastructure/jwt-token-service.js';
 import { AuthUser } from '../../auth/domain/entities/auth-user.js';
-import type { IUserRepository } from '../../auth/domain/repositories/user-repository.js';
+import type {
+  IUserRepository,
+  ListUsersQuery,
+} from '../../auth/domain/repositories/user-repository.js';
 import { Role } from '../../authorization/domain/entities/role.js';
 import { Permission } from '../../authorization/domain/value-objects/permission.js';
 import type { IRoleRepository } from '../../authorization/domain/repositories/role-repository.js';
@@ -52,6 +55,33 @@ class InMemoryUserRepository implements IUserRepository {
 
   async findById(id: UUID): Promise<AuthUser | null> {
     return this.byId.get(id) ?? null;
+  }
+
+  async listByTenant(tenantId: UUID, query: ListUsersQuery): Promise<PaginatedResult<AuthUser>> {
+    let items = [...this.byId.values()].filter((u) => u.tenantId === tenantId);
+    if (query.isActive !== undefined) {
+      items = items.filter((u) => u.isActive === query.isActive);
+    }
+    if (query.search !== undefined && query.search !== '') {
+      const term = query.search.toLowerCase();
+      items = items.filter(
+        (u) =>
+          u.email.toLowerCase().includes(term) ||
+          u.firstName.toLowerCase().includes(term) ||
+          u.lastName.toLowerCase().includes(term),
+      );
+    }
+    items.sort((a, b) => a.email.localeCompare(b.email));
+    const total = items.length;
+    const totalPages = total === 0 ? 0 : Math.ceil(total / query.pageSize);
+    const start = (query.page - 1) * query.pageSize;
+    return {
+      items: items.slice(start, start + query.pageSize),
+      total,
+      page: query.page,
+      pageSize: query.pageSize,
+      totalPages,
+    };
   }
 
   async create(user: AuthUser): Promise<AuthUser> {
@@ -595,6 +625,123 @@ describe('admin routes', () => {
       });
       expect(response.statusCode).toBe(400);
       expect(response.json().error_code).toBe('VALIDATION_ERROR');
+    });
+  });
+
+  describe('GET /api/v1/admin/users', () => {
+    it('lists the tenant users (paginated, no password hash)', async () => {
+      ctx = await buildTestApp();
+      const response = await ctx.app.inject({
+        method: 'GET',
+        url: '/api/v1/admin/users?page=1&pageSize=10',
+        headers: authHeader(ctx.token),
+      });
+      expect(response.statusCode).toBe(200);
+      const body = response.json();
+      // The seeded admin + the existing "grace" user, both in TENANT_ID.
+      expect(body).toMatchObject({ total: 2, page: 1, pageSize: 10 });
+      expect(body.items).toHaveLength(2);
+      expect(body.items[0].passwordHash).toBeUndefined();
+      expect(body.items.every((u: { tenantId: string }) => u.tenantId === TENANT_ID)).toBe(true);
+    });
+
+    it('filters users by a case-insensitive search term', async () => {
+      ctx = await buildTestApp();
+      const response = await ctx.app.inject({
+        method: 'GET',
+        url: '/api/v1/admin/users?search=GRACE',
+        headers: authHeader(ctx.token),
+      });
+      expect(response.statusCode).toBe(200);
+      const body = response.json();
+      expect(body.total).toBe(1);
+      expect(body.items[0]).toMatchObject({ email: 'grace@example.com' });
+    });
+
+    it('returns 403 for a non-admin caller', async () => {
+      ctx = await buildTestApp({ admin: false });
+      const response = await ctx.app.inject({
+        method: 'GET',
+        url: '/api/v1/admin/users',
+        headers: authHeader(ctx.token),
+      });
+      expect(response.statusCode).toBe(403);
+      expect(response.json().error_code).toBe('FORBIDDEN');
+    });
+
+    it('returns 400 on an invalid query parameter', async () => {
+      ctx = await buildTestApp();
+      const response = await ctx.app.inject({
+        method: 'GET',
+        url: '/api/v1/admin/users?pageSize=0',
+        headers: authHeader(ctx.token),
+      });
+      expect(response.statusCode).toBe(400);
+      expect(response.json().error_code).toBe('VALIDATION_ERROR');
+    });
+  });
+
+  describe('GET /api/v1/admin/roles', () => {
+    it('lists the tenant roles with their permissions', async () => {
+      ctx = await buildTestApp();
+      const response = await ctx.app.inject({
+        method: 'GET',
+        url: '/api/v1/admin/roles',
+        headers: authHeader(ctx.token),
+      });
+      expect(response.statusCode).toBe(200);
+      const body = response.json();
+      expect(Array.isArray(body)).toBe(true);
+      const names = (body as Array<{ name: string }>).map((r) => r.name).sort();
+      expect(names).toEqual(['Admin', 'Cashier', 'Manager', 'User']);
+    });
+
+    it('returns 403 for a non-admin caller', async () => {
+      ctx = await buildTestApp({ admin: false });
+      const response = await ctx.app.inject({
+        method: 'GET',
+        url: '/api/v1/admin/roles',
+        headers: authHeader(ctx.token),
+      });
+      expect(response.statusCode).toBe(403);
+      expect(response.json().error_code).toBe('FORBIDDEN');
+    });
+  });
+
+  describe('GET /api/v1/admin/roles/:id', () => {
+    it('reads a single role with its permission set', async () => {
+      ctx = await buildTestApp();
+      const response = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/admin/roles/${CUSTOM_ROLE_ID}`,
+        headers: authHeader(ctx.token),
+      });
+      expect(response.statusCode).toBe(200);
+      const body = response.json();
+      expect(body).toMatchObject({ id: CUSTOM_ROLE_ID, name: 'Cashier' });
+      expect(body.permissions).toEqual([{ module: 'cash', screen: 'list', action: 'read' }]);
+    });
+
+    it('returns 404 when the role does not exist', async () => {
+      ctx = await buildTestApp();
+      const response = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/admin/roles/${MISSING_ID}`,
+        headers: authHeader(ctx.token),
+      });
+      expect(response.statusCode).toBe(404);
+      expect(response.json().error_code).toBe('NOT_FOUND');
+    });
+
+    it('returns 403 for a non-admin caller', async () => {
+      ctx = await buildTestApp({ admin: false });
+      const response = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/admin/roles/${CUSTOM_ROLE_ID}`,
+        headers: authHeader(ctx.token),
+      });
+      expect(response.statusCode).toBe(403);
+      expect(response.json().error_code).toBe('FORBIDDEN');
     });
   });
 });

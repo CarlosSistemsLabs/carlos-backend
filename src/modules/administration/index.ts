@@ -26,6 +26,9 @@ export { GetConfigurationUseCase } from './application/use-cases/get-configurati
 export { ListConfigurationsUseCase } from './application/use-cases/list-configurations.use-case.js';
 export { AssignRoleToUserUseCase } from './application/use-cases/assign-role-to-user.use-case.js';
 export { GetAuditLogsUseCase } from './application/use-cases/get-audit-logs.use-case.js';
+export { ListUsersUseCase } from './application/use-cases/list-users.use-case.js';
+export { ListRolesUseCase } from './application/use-cases/list-roles.use-case.js';
+export { GetRoleUseCase } from './application/use-cases/get-role.use-case.js';
 
 // DTOs + mappers + default seed data
 export {
@@ -41,6 +44,9 @@ export {
   type AssignRoleToUserInputDto,
   type GetAuditLogsInputDto,
   type AuditLogOutput,
+  type ListUsersInputDto,
+  type ListRolesInputDto,
+  type GetRoleInputDto,
   brandingCacheKey,
   type UpdateBrandingInputDto,
   type GetBrandingInputDto,

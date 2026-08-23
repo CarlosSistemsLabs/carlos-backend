@@ -38,6 +38,7 @@ describe('LoginUserUseCase', () => {
     users = {
       findByEmail: vi.fn(),
       findById: vi.fn(),
+      listByTenant: vi.fn(),
       create: vi.fn(async (u: AuthUser) => u),
       update: vi.fn(async (u: AuthUser) => u),
     };

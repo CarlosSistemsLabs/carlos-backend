@@ -33,6 +33,8 @@ describe('PrismaUserRepository', () => {
     prisma = {
       user: {
         findFirst: vi.fn(),
+        findMany: vi.fn(),
+        count: vi.fn(),
         create: vi.fn(),
         update: vi.fn(),
       },
@@ -67,6 +69,40 @@ describe('PrismaUserRepository', () => {
       where: { id: 'user-9', deletedAt: null },
     });
     expect(user?.id).toBe('user-9');
+  });
+
+  it('listByTenant scopes by tenant, applies filters, orders + paginates, and maps a page', async () => {
+    vi.mocked(prisma.user.findMany).mockResolvedValue([
+      makeRow({ id: 'user-1', email: 'ada@example.com' }),
+      makeRow({ id: 'user-2', email: 'grace@example.com' }),
+    ]);
+    vi.mocked(prisma.user.count).mockResolvedValue(2);
+
+    const result = await repo.listByTenant('tenant-1', {
+      page: 1,
+      pageSize: 20,
+      isActive: true,
+      search: 'exam',
+    });
+
+    const findManyArg = vi.mocked(prisma.user.findMany).mock.calls[0]?.[0];
+    expect(findManyArg).toMatchObject({
+      where: {
+        tenantId: 'tenant-1',
+        deletedAt: null,
+        isActive: true,
+        OR: [
+          { email: { contains: 'exam', mode: 'insensitive' } },
+          { firstName: { contains: 'exam', mode: 'insensitive' } },
+          { lastName: { contains: 'exam', mode: 'insensitive' } },
+        ],
+      },
+      orderBy: { email: 'asc' },
+      skip: 0,
+      take: 20,
+    });
+    expect(result).toMatchObject({ total: 2, page: 1, pageSize: 20, totalPages: 1 });
+    expect(result.items.map((u) => u.id)).toEqual(['user-1', 'user-2']);
   });
 
   it('create persists the aggregate id and all attributes, returning the stored user', async () => {
