@@ -110,6 +110,22 @@ export const idParamSchema = z
 
 export type IdParam = z.infer<typeof idParamSchema>;
 
+/**
+ * User-listing query string (task 46.7 — filters + pagination). `isActive`
+ * arrives as the string `"true"`/`"false"` and is coerced to a boolean; `search`
+ * matches email/first/last name. Unknown keys are stripped.
+ */
+export const listUsersQuerySchema = z
+  .object({
+    page: page.optional(),
+    pageSize: pageSize.optional(),
+    isActive: z.enum(['true', 'false']).optional(),
+    search: textField.optional(),
+  })
+  .strip();
+
+export type ListUsersQuery = z.infer<typeof listUsersQuerySchema>;
+
 /** Audit-log listing query string (filters + pagination). */
 export const auditLogsQuerySchema = z
   .object({
@@ -335,5 +351,73 @@ export const auditLogsRouteSchema = {
     400: errorEnvelopeSchema,
     401: errorEnvelopeSchema,
     403: errorEnvelopeSchema,
+  },
+} as const;
+
+// ---------------------------------------------------------------------------
+// Read endpoints (task 46.7): list users, list roles, get role
+// ---------------------------------------------------------------------------
+
+const pagedUserOutputSchema = {
+  type: 'object',
+  properties: {
+    items: { type: 'array', items: userOutputSchema },
+    total: { type: 'integer' },
+    page: { type: 'integer' },
+    pageSize: { type: 'integer' },
+    totalPages: { type: 'integer' },
+  },
+  required: ['items', 'total', 'page', 'pageSize', 'totalPages'],
+} as const;
+
+const listUsersQueryDoc = {
+  type: 'object',
+  properties: {
+    page: { type: 'integer', minimum: 1 },
+    pageSize: { type: 'integer', minimum: 1 },
+    isActive: { type: 'string', enum: ['true', 'false'] },
+    search: { type: 'string' },
+  },
+} as const;
+
+const roleListOutputSchema = {
+  type: 'array',
+  items: roleOutputSchema,
+} as const;
+
+/** OpenAPI schema for `GET /api/v1/admin/users`. */
+export const listUsersRouteSchema = {
+  tags: ['Administration'],
+  summary: 'List users within the caller tenant (filterable, paginated)',
+  querystring: listUsersQueryDoc,
+  response: {
+    200: pagedUserOutputSchema,
+    400: errorEnvelopeSchema,
+    401: errorEnvelopeSchema,
+    403: errorEnvelopeSchema,
+  },
+} as const;
+
+/** OpenAPI schema for `GET /api/v1/admin/roles`. */
+export const listRolesRouteSchema = {
+  tags: ['Administration'],
+  summary: 'List roles within the caller tenant (each with its permissions)',
+  response: {
+    200: roleListOutputSchema,
+    401: errorEnvelopeSchema,
+    403: errorEnvelopeSchema,
+  },
+} as const;
+
+/** OpenAPI schema for `GET /api/v1/admin/roles/:id`. */
+export const getRoleRouteSchema = {
+  tags: ['Administration'],
+  summary: 'Read a single role with its permission set',
+  params: idParamDoc,
+  response: {
+    200: roleOutputSchema,
+    401: errorEnvelopeSchema,
+    403: errorEnvelopeSchema,
+    404: errorEnvelopeSchema,
   },
 } as const;

@@ -12,9 +12,13 @@ import {
 import { validateBody, validateParams, validateQuery } from '@presentation/validators/index.js';
 import { AssignRoleToUserUseCase } from '../application/use-cases/assign-role-to-user.use-case.js';
 import { GetAuditLogsUseCase } from '../application/use-cases/get-audit-logs.use-case.js';
+import { ListUsersUseCase } from '../application/use-cases/list-users.use-case.js';
+import { ListRolesUseCase } from '../application/use-cases/list-roles.use-case.js';
+import { GetRoleUseCase } from '../application/use-cases/get-role.use-case.js';
 import type {
   AssignRoleToUserInputDto,
   GetAuditLogsInputDto,
+  ListUsersInputDto,
 } from '../application/dto/administration-dtos.js';
 import {
   createUserBodySchema,
@@ -23,11 +27,15 @@ import {
   updateRolePermissionsBodySchema,
   idParamSchema,
   auditLogsQuerySchema,
+  listUsersQuerySchema,
   createUserRouteSchema,
   assignRoleRouteSchema,
   createRoleRouteSchema,
   updateRolePermissionsRouteSchema,
   auditLogsRouteSchema,
+  listUsersRouteSchema,
+  listRolesRouteSchema,
+  getRoleRouteSchema,
 } from './admin.schemas.js';
 
 /**
@@ -51,6 +59,9 @@ interface AdminUseCases {
   createRole: CreateRoleUseCase;
   updateRolePermissions: UpdateRolePermissionsUseCase;
   getAuditLogs: GetAuditLogsUseCase;
+  listUsers: ListUsersUseCase;
+  listRoles: ListRolesUseCase;
+  getRole: GetRoleUseCase;
 }
 
 /**
@@ -76,6 +87,9 @@ export function buildAdminUseCases(container: Container): AdminUseCases {
     createRole: new CreateRoleUseCase(roles),
     updateRolePermissions: new UpdateRolePermissionsUseCase(roles),
     getAuditLogs: new GetAuditLogsUseCase(auditLogs),
+    listUsers: new ListUsersUseCase(users),
+    listRoles: new ListRolesUseCase(roles),
+    getRole: new GetRoleUseCase(roles),
   };
 }
 
@@ -232,6 +246,59 @@ export const adminRoutesPlugin: FastifyPluginAsync<AdminRoutesOptions> = (app, o
         ...(query.to !== undefined ? { to: query.to } : {}),
       };
       const result = await useCases.getAuditLogs.execute(input);
+      return reply.status(200).send(result);
+    },
+  );
+
+  // GET /api/v1/admin/users — list users in the caller's tenant (paginated)
+  app.get(
+    '/users',
+    {
+      schema: listUsersRouteSchema,
+      preHandler: [app.authenticate, app.authorize(ADMIN_MODULE, 'users', 'read')],
+    },
+    async (request, reply) => {
+      const tenantId = requireTenantId(request);
+      const query = validateQuery(request, listUsersQuerySchema);
+      const input: ListUsersInputDto = {
+        tenantId,
+        ...(query.page !== undefined ? { page: query.page } : {}),
+        ...(query.pageSize !== undefined ? { pageSize: query.pageSize } : {}),
+        ...(query.isActive !== undefined ? { isActive: query.isActive === 'true' } : {}),
+        ...(query.search !== undefined ? { search: query.search } : {}),
+      };
+      const result = await useCases.listUsers.execute(input);
+      return reply.status(200).send(result);
+    },
+  );
+
+  // GET /api/v1/admin/roles — list roles in the caller's tenant (with permissions).
+  // Registered BEFORE the parametric `/roles/:id` so the static path is never
+  // captured as an id.
+  app.get(
+    '/roles',
+    {
+      schema: listRolesRouteSchema,
+      preHandler: [app.authenticate, app.authorize(ADMIN_MODULE, 'roles', 'read')],
+    },
+    async (request, reply) => {
+      const tenantId = requireTenantId(request);
+      const result = await useCases.listRoles.execute({ tenantId });
+      return reply.status(200).send(result);
+    },
+  );
+
+  // GET /api/v1/admin/roles/:id — read a single role with its permissions
+  app.get(
+    '/roles/:id',
+    {
+      schema: getRoleRouteSchema,
+      preHandler: [app.authenticate, app.authorize(ADMIN_MODULE, 'roles', 'read')],
+    },
+    async (request, reply) => {
+      const tenantId = requireTenantId(request);
+      const { id } = validateParams(request, idParamSchema);
+      const result = await useCases.getRole.execute({ tenantId, roleId: id });
       return reply.status(200).send(result);
     },
   );

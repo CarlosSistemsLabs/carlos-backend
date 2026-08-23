@@ -5,7 +5,11 @@ import { registerErrorHandler } from '@presentation/middlewares/error-handler.js
 import { registerAuthRoutes } from './auth.routes.js';
 import { AuthUser } from '../domain/entities/auth-user.js';
 import { JwtTokenService } from '../infrastructure/jwt-token-service.js';
-import type { IUserRepository } from '../domain/repositories/user-repository.js';
+import type {
+  IUserRepository,
+  ListUsersQuery,
+} from '../domain/repositories/user-repository.js';
+import type { PaginatedResult } from '@shared/types/index.js';
 import type {
   CreateRefreshTokenInput,
   IRefreshTokenRepository,
@@ -35,6 +39,21 @@ class InMemoryUserRepository implements IUserRepository {
 
   async findById(id: string): Promise<AuthUser | null> {
     return this.byId.get(id) ?? null;
+  }
+
+  async listByTenant(
+    tenantId: string,
+    query: ListUsersQuery,
+  ): Promise<PaginatedResult<AuthUser>> {
+    const items = [...this.byId.values()].filter((u) => u.tenantId === tenantId);
+    const total = items.length;
+    return {
+      items: items.slice((query.page - 1) * query.pageSize, query.page * query.pageSize),
+      total,
+      page: query.page,
+      pageSize: query.pageSize,
+      totalPages: total === 0 ? 0 : Math.ceil(total / query.pageSize),
+    };
   }
 
   async create(user: AuthUser): Promise<AuthUser> {

@@ -225,3 +225,32 @@ export interface GetAuditLogsInputDto {
  * not import the repository port directly.
  */
 export type AuditLogOutput = AuditLogRecord;
+
+/**
+ * Input for {@link ListUsersUseCase} (task 46.7). The tenant is always supplied
+ * by the presentation layer from the authenticated admin's token (never the
+ * client). `page`/`pageSize` default in the use case; `isActive`/`search` are
+ * optional filters (`search` matches email/first/last name case-insensitively).
+ */
+export interface ListUsersInputDto {
+  tenantId: UUID;
+  page?: number;
+  pageSize?: number;
+  isActive?: boolean;
+  search?: string;
+}
+
+/** Input for {@link ListRolesUseCase} (task 46.7) — the caller's tenant. */
+export interface ListRolesInputDto {
+  tenantId: UUID;
+}
+
+/**
+ * Input for {@link GetRoleUseCase} (task 46.7). The role is resolved
+ * tenant-scoped: a role that does not exist OR belongs to another tenant
+ * surfaces as a 404, so the endpoint never leaks cross-tenant existence.
+ */
+export interface GetRoleInputDto {
+  tenantId: UUID;
+  roleId: UUID;
+}

@@ -9,6 +9,9 @@ function makeUsers(): IUserRepository {
   return {
     findByEmail: vi.fn().mockResolvedValue(null),
     findById: vi.fn().mockResolvedValue(null),
+    listByTenant: vi
+      .fn()
+      .mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 20, totalPages: 0 }),
     create: vi.fn(async (user: AuthUser) => user),
     update: vi.fn(async (user: AuthUser) => user),
   };
