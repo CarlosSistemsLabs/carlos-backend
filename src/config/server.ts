@@ -34,6 +34,7 @@ import { registerPurchaseRoutes } from '@modules/purchases/presentation/purchase
 import { registerCashRoutes } from '@modules/cash/presentation/cash.routes.js';
 import { registerPaymentRoutes } from '@modules/cash/presentation/payment.routes.js';
 import { registerReportRoutes } from '@modules/reports/presentation/report.routes.js';
+import { registerAddressRoutes } from '@modules/addresses/index.js';
 import { registerAiRoutes } from '@/ai/presentation/ai.routes.js';
 import { ResilientAIService } from '@/ai/index.js';
 import { registerAdminRoutes } from '@modules/administration/presentation/admin.routes.js';
@@ -374,6 +375,14 @@ export async function buildServer(container?: Container): Promise<FastifyInstanc
     registerReportInfrastructure(authContainer);
   }
   await registerReportRoutes(app, authContainer);
+
+  // Address autocomplete + geocoding for the mobile address-validation flow,
+  // mounted under `/api/v1/addresses`. Both routes require only `authenticate`
+  // (no feature/RBAC gate — address lookup is a cross-cutting helper). The
+  // provider is selected from env: the Google Places provider when
+  // `GOOGLE_PLACES_API_KEY` is set, otherwise a deterministic stub so the flow
+  // works end-to-end without external keys.
+  await registerAddressRoutes(app);
 
   // Compose the AI Integration endpoints (task 37.3, Requirement 20.1) under
   // `/api/v1/ai`: the sales assistant, natural-language query and AI report

@@ -192,6 +192,15 @@ const environmentSchema = z.object({
   SUSPICIOUS_ACTIVITY_THRESHOLD: z.coerce.number().int().positive().default(5),
   SUSPICIOUS_ACTIVITY_WINDOW_MS: z.coerce.number().int().positive().default(300_000),
   SUSPICIOUS_ACTIVITY_COOLDOWN_MS: z.coerce.number().int().nonnegative().default(300_000),
+
+  /**
+   * Google Places API key for the address autocomplete/geocode endpoints
+   * (addresses module). OPTIONAL: when absent the addresses provider falls back
+   * to a deterministic stub (sample Argentine localities), so the endpoints and
+   * the mobile address-validation flow work in every environment without a key.
+   * Set it per deployment to switch to real Google Places data.
+   */
+  GOOGLE_PLACES_API_KEY: z.string().optional(),
 });
 
 export type Environment = z.infer<typeof environmentSchema>;
