@@ -4,59 +4,86 @@ import type {
   GeographicAddress,
 } from '../application/address.types.js';
 
-/** Minimal shapes of the Google Places responses we consume. */
-interface GoogleAutocompleteResponse {
-  readonly predictions?: ReadonlyArray<{
-    readonly place_id?: string;
-    readonly description?: string;
-    readonly structured_formatting?: { readonly main_text?: string };
-    readonly terms?: ReadonlyArray<{ readonly value?: string }>;
+/** Minimal shapes of the Places API (New) responses we consume. */
+interface NewAutocompleteResponse {
+  readonly suggestions?: ReadonlyArray<{
+    readonly placePrediction?: {
+      readonly placeId?: string;
+      readonly text?: { readonly text?: string };
+      readonly structuredFormat?: {
+        readonly mainText?: { readonly text?: string };
+        readonly secondaryText?: { readonly text?: string };
+      };
+    };
   }>;
 }
 
-interface GoogleComponent {
-  readonly long_name?: string;
+interface NewAddressComponent {
+  readonly longText?: string;
+  readonly shortText?: string;
   readonly types?: readonly string[];
 }
 
-interface GoogleDetailsResponse {
-  readonly result?: {
-    readonly geometry?: { readonly location?: { readonly lat?: number; readonly lng?: number } };
-    readonly address_components?: readonly GoogleComponent[];
-  };
+interface NewDetailsResponse {
+  readonly location?: { readonly latitude?: number; readonly longitude?: number };
+  readonly addressComponents?: readonly NewAddressComponent[];
 }
 
-const AUTOCOMPLETE_URL = 'https://maps.googleapis.com/maps/api/place/autocomplete/json';
-const DETAILS_URL = 'https://maps.googleapis.com/maps/api/place/details/json';
+const AUTOCOMPLETE_URL = 'https://places.googleapis.com/v1/places:autocomplete';
+const DETAILS_URL = 'https://places.googleapis.com/v1/places';
 
 /**
- * {@link AddressProvider} backed by Google Places (Autocomplete + Details).
+ * {@link AddressProvider} backed by the **Places API (New)** (Autocomplete +
+ * Place Details). Used when `GOOGLE_PLACES_API_KEY` is configured.
  *
- * Used when `GOOGLE_PLACES_API_KEY` is configured. Best-effort mapping from
- * Google's structures to the module contract; results are restricted to
- * Argentina and Spanish locale. Throwing/here-undefined fields degrade to empty
- * strings so the mobile client always receives well-formed objects.
+ * The key MUST allow server-side use (no Android-app restriction — those calls
+ * are blocked with `API_KEY_ANDROID_APP_BLOCKED`). Results are restricted to
+ * Argentina (`includedRegionCodes: ["ar"]`) and Spanish. On any non-2xx
+ * response the error is logged and an empty result is returned so the mobile
+ * client always receives a well-formed (if empty) payload.
  */
 export class GooglePlacesAddressProvider implements AddressProvider {
   constructor(private readonly apiKey: string) {}
 
   async autocomplete(query: string): Promise<AddressSuggestion[]> {
-    const url = `${AUTOCOMPLETE_URL}?input=${encodeURIComponent(query)}` +
-      `&language=es&components=country:ar&key=${encodeURIComponent(this.apiKey)}`;
-    const response = await fetch(url);
-    const data = (await response.json()) as GoogleAutocompleteResponse;
-    return (data.predictions ?? []).flatMap((prediction) => {
-      const id = prediction.place_id;
-      if (id === undefined) return [];
-      const terms = prediction.terms ?? [];
-      const streetName = prediction.structured_formatting?.main_text ?? terms[0]?.value ?? '';
+    const response = await fetch(AUTOCOMPLETE_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': this.apiKey,
+      },
+      body: JSON.stringify({
+        input: query,
+        languageCode: 'es',
+        includedRegionCodes: ['ar'],
+      }),
+    });
+
+    if (!response.ok) {
+      await logFailure('autocomplete', response);
+      return [];
+    }
+
+    const data = (await response.json()) as NewAutocompleteResponse;
+    return (data.suggestions ?? []).flatMap((suggestion) => {
+      const prediction = suggestion.placePrediction;
+      const id = prediction?.placeId;
+      if (prediction === undefined || id === undefined) return [];
+
+      const main = prediction.structuredFormat?.mainText?.text ?? prediction.text?.text ?? '';
+      const secondary = prediction.structuredFormat?.secondaryText?.text ?? '';
+      const parts = secondary
+        .split(',')
+        .map((part) => part.trim())
+        .filter((part) => part.length > 0);
+
       return [
         {
           id,
-          country: terms.at(-1)?.value ?? 'Argentina',
-          locality: terms.at(-3)?.value ?? '',
-          stateOrProvince: terms.at(-2)?.value ?? '',
-          streetName,
+          country: parts.at(-1) ?? 'Argentina',
+          locality: parts.at(-3) ?? parts.at(0) ?? '',
+          stateOrProvince: parts.at(-2) ?? '',
+          streetName: main,
           streetType: 'street',
         },
       ];
@@ -64,16 +91,25 @@ export class GooglePlacesAddressProvider implements AddressProvider {
   }
 
   async locate(id: string): Promise<GeographicAddress[]> {
-    const url = `${DETAILS_URL}?place_id=${encodeURIComponent(id)}` +
-      `&language=es&fields=geometry,address_component&key=${encodeURIComponent(this.apiKey)}`;
-    const response = await fetch(url);
-    const data = (await response.json()) as GoogleDetailsResponse;
-    const result = data.result;
-    if (result?.geometry?.location === undefined) return [];
+    const url = `${DETAILS_URL}/${encodeURIComponent(id)}`;
+    const response = await fetch(url, {
+      headers: {
+        'X-Goog-Api-Key': this.apiKey,
+        'X-Goog-FieldMask': 'location,addressComponents',
+      },
+    });
 
-    const lat = result.geometry.location.lat ?? 0;
-    const lng = result.geometry.location.lng ?? 0;
-    const components = result.address_components ?? [];
+    if (!response.ok) {
+      await logFailure('details', response);
+      return [];
+    }
+
+    const data = (await response.json()) as NewDetailsResponse;
+    const lat = data.location?.latitude;
+    const lng = data.location?.longitude;
+    if (lat === undefined || lng === undefined) return [];
+
+    const components = data.addressComponents ?? [];
     const streetNrText = component(components, 'street_number');
 
     const address: GeographicAddress = {
@@ -87,7 +123,9 @@ export class GooglePlacesAddressProvider implements AddressProvider {
       streetName: component(components, 'route'),
       streetNr: streetNrText === '' ? null : Number.parseInt(streetNrText, 10),
       streetType: 'CALLE',
-      locality: component(components, 'locality') || component(components, 'administrative_area_level_2'),
+      locality:
+        component(components, 'locality') ||
+        component(components, 'administrative_area_level_2'),
       city: component(components, 'locality'),
       stateOrProvince: component(components, 'administrative_area_level_1'),
       country: component(components, 'country'),
@@ -98,7 +136,19 @@ export class GooglePlacesAddressProvider implements AddressProvider {
   }
 }
 
-/** Returns the `long_name` of the first component whose types include [type], or ''. */
-function component(components: readonly GoogleComponent[], type: string): string {
-  return components.find((c) => (c.types ?? []).includes(type))?.long_name ?? '';
+/** Returns the `longText` of the first component whose types include [type], or ''. */
+function component(components: readonly NewAddressComponent[], type: string): string {
+  return components.find((c) => (c.types ?? []).includes(type))?.longText ?? '';
+}
+
+/** Logs a non-2xx Places response (status + a short body excerpt) for diagnostics. */
+async function logFailure(operation: string, response: Response): Promise<void> {
+  let body = '';
+  try {
+    body = (await response.text()).slice(0, 300);
+  } catch {
+    body = '<unreadable body>';
+  }
+  // eslint-disable-next-line no-console
+  console.warn(`[addresses] Places ${operation} failed: ${response.status} ${body}`);
 }
