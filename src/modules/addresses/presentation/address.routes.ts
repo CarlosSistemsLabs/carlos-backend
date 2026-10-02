@@ -1,9 +1,9 @@
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { env } from '@config/environment';
-import { validateParams, validateQuery } from '@presentation/validators/index.js';
+import { validateQuery } from '@presentation/validators/index.js';
 import type { AddressProvider } from '../application/address.types.js';
 import { buildAddressProvider } from '../infrastructure/address-provider.factory.js';
-import { addressIdParamSchema, autocompleteQuerySchema } from './address.schemas.js';
+import { addressLocationQuerySchema, autocompleteQuerySchema } from './address.schemas.js';
 
 /** Minimum characters before the autocomplete calls the provider. */
 const MIN_QUERY_LENGTH = 3;
@@ -23,7 +23,8 @@ export interface AddressRoutesOptions {
  *
  * - GET `/autocomplete?q=<text>` → suggestions (empty until `q` has
  *   {@link MIN_QUERY_LENGTH} characters).
- * - GET `/:id/location` → the geocoded address(es) for the chosen suggestion.
+ * - GET `/location?id=<placeId>` → the geocoded address(es) for the chosen
+ *   suggestion.
  */
 export const addressRoutesPlugin: FastifyPluginAsync<AddressRoutesOptions> = (app, opts) => {
   const provider = opts.provider ?? buildAddressProvider(env);
@@ -44,10 +45,10 @@ export const addressRoutesPlugin: FastifyPluginAsync<AddressRoutesOptions> = (ap
   );
 
   app.get(
-    '/:id/location',
+    '/location',
     { preHandler: [app.authenticate] },
     async (request, reply) => {
-      const { id } = validateParams(request, addressIdParamSchema);
+      const { id } = validateQuery(request, addressLocationQuerySchema);
       const location = await provider.locate(id);
       return reply.status(200).send(location);
     },
